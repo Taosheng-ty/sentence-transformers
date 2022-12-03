@@ -82,7 +82,8 @@ logging.info("Queries: {}".format(len(queries)))
 
 queries_result_list = []
 run = {}
-model = CrossEncoder(sys.argv[1], max_length=512)
+modelPath="/home/collab/u1368791/largefiles/TaoFiles/sentence-transformers/examples/training/ms_marco/output/training_ms-marco_cross-encoder-v2-microsoft-MiniLM-L12-H384-uncased-2022-12-02_14-58-49/"
+model = CrossEncoder(modelPath, max_length=512)
 
 for qid in tqdm.tqdm(relevant_qid):
     query = queries[qid]

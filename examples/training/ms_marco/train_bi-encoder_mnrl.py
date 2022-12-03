@@ -43,10 +43,10 @@ logging.basicConfig(format='%(asctime)s - %(message)s',
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--train_batch_size", default=64, type=int)
-parser.add_argument("--max_seq_length", default=300, type=int)
-parser.add_argument("--model_name", required=True)
+parser.add_argument("--max_seq_length", default=250, type=int)
+parser.add_argument("--model_name", default="distilbert-base-uncased")
 parser.add_argument("--max_passages", default=0, type=int)
-parser.add_argument("--epochs", default=10, type=int)
+parser.add_argument("--epochs", default=30, type=int)
 parser.add_argument("--pooling", default="mean")
 parser.add_argument("--negs_to_use", default=None, help="From which systems should negatives be used? Multiple systems seperated by comma. None = all")
 parser.add_argument("--warmup_steps", default=1000, type=int)
