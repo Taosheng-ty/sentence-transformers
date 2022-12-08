@@ -171,6 +171,7 @@ if not os.path.exists(hard_negatives_filepath):
 logging.info("Read hard negatives train file")
 train_queries = {}
 negs_to_use = None
+max_passages=100000
 with gzip.open(hard_negatives_filepath, 'rt') as fIn:
     for line in tqdm.tqdm(fIn):
         if max_passages > 0 and len(train_queries) >= max_passages:
@@ -265,6 +266,7 @@ model.fit(train_objectives=[(train_dataloader, train_loss)],
           checkpoint_path=model_save_path,
         #   checkpoint_save_steps=10000,
           evaluation_steps=100,
+          output_path=model_save_path,
           optimizer_params = {'lr': args.lr},
           )
 

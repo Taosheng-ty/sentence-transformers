@@ -19,4 +19,5 @@ class sbertSave(SentenceTransformer):
             if score > self.best_score:
                 self.best_score = score
                 if save_best_model:
-                    self.save(output_path) 
+                    print(output_path,steps,"*"*100)
+                    self.save(os.path.join(output_path,str(steps))) 
