@@ -13,7 +13,8 @@ import random
 from shutil import copyfile
 import pickle
 import argparse
-
+from RerankingEvaluatorMRR import RerankingEvaluatorMRR
+from BiEncoderSave import sbertSave
 #### Just some code to print debug information to stdout
 logging.basicConfig(format='%(asctime)s - %(message)s',
                     datefmt='%Y-%m-%d %H:%M:%S',
@@ -23,7 +24,7 @@ logging.basicConfig(format='%(asctime)s - %(message)s',
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--train_batch_size", default=64, type=int)
+parser.add_argument("--train_batch_size", default=16, type=int)
 parser.add_argument("--max_seq_length", default=250, type=int)
 parser.add_argument("--model_name", default="distilbert-base-uncased")
 parser.add_argument("--max_passages", default=0, type=int)
@@ -53,13 +54,13 @@ num_epochs = args.epochs         # Number of epochs we want to train
 # Load our embedding model
 if args.use_pre_trained_model:
     logging.info("use pretrained SBERT model")
-    model = SentenceTransformer(model_name)
+    model = sbertSave(model_name)
     model.max_seq_length = max_seq_length
 else:
     logging.info("Create new SBERT model")
     word_embedding_model = models.Transformer(model_name, max_seq_length=max_seq_length)
     pooling_model = models.Pooling(word_embedding_model.get_word_embedding_dimension(), args.pooling)
-    model = SentenceTransformer(modules=[word_embedding_model, pooling_model])
+    model = sbertSave(modules=[word_embedding_model, pooling_model])
 
 model_save_path = f'output/train_bi-encoder-margin_mse-{model_name.replace("/", "-")}-batch_size_{train_batch_size}-{datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}'
 
@@ -75,7 +76,7 @@ with open(train_script_path, 'a') as fOut:
 
 ### Now we read the MS Marco dataset
 data_folder = 'msmarco-data'
-
+data_folder =os.path.join(os.path.expanduser('~'), '.cache/MSMARCO')
 #### Read the corpus files, that contain all the passages. Store them in the corpus dict
 corpus = {}         #dict in the format: passage_id -> passage. Stores all existent passages
 collection_filepath = os.path.join(data_folder, 'collection.tsv')
@@ -116,6 +117,39 @@ with open(queries_filepath, 'r', encoding='utf8') as fIn:
         queries[qid] = query
 
 
+### Now we create our  dev data
+train_samples = []
+dev_samples = {}
+
+# We use 200 random queries from the train set for evaluation during training
+# Each query has at least one relevant and up to 200 irrelevant (negative) passages
+num_dev_queries = 200
+num_max_dev_negatives = 200
+
+# msmarco-qidpidtriples.rnd-shuf.train-eval.tsv.gz and msmarco-qidpidtriples.rnd-shuf.train.tsv.gz is a randomly
+# shuffled version of qidpidtriples.train.full.2.tsv.gz from the MS Marco website
+# We extracted in the train-eval split 500 random queries that can be used for evaluation during training
+train_eval_filepath = os.path.join(data_folder, 'msmarco-qidpidtriples.rnd-shuf.train-eval.tsv.gz')
+if not os.path.exists(train_eval_filepath):
+    logging.info("Download "+os.path.basename(train_eval_filepath))
+    util.http_get('https://sbert.net/datasets/msmarco-qidpidtriples.rnd-shuf.train-eval.tsv.gz', train_eval_filepath)
+
+with gzip.open(train_eval_filepath, 'rt') as fIn:
+    for line in fIn:
+        qid, pos_id, neg_id = line.strip().split()
+        qid, pos_id, neg_id=int(qid), int(pos_id), int(neg_id)
+        if qid not in dev_samples and len(dev_samples) < num_dev_queries:
+            dev_samples[qid] = {'query': queries[qid], 'positive': set(), 'negative': set()}
+
+        if qid in dev_samples:
+            dev_samples[qid]['positive'].add(corpus[pos_id])
+
+            if len(dev_samples[qid]['negative']) < num_max_dev_negatives:
+                dev_samples[qid]['negative'].add(corpus[neg_id])
+
+dev_qids = set(dev_samples.keys())
+
+evaluator = RerankingEvaluatorMRR(dev_samples, name='train-eval')
 # Load a dict (qid, pid) -> ce_score that maps query-ids (qid) and paragraph-ids (pid)
 # to the CrossEncoder score computed by the cross-encoder/ms-marco-MiniLM-L-6-v2 model
 ce_scores_file = os.path.join(data_folder, 'cross-encoder-ms-marco-MiniLM-L-6-v2-scores.pkl.gz')
@@ -142,7 +176,8 @@ with gzip.open(hard_negatives_filepath, 'rt') as fIn:
         if max_passages > 0 and len(train_queries) >= max_passages:
             break
         data = json.loads(line)
-
+        if data['qid'] in dev_qids: #Skip queries in our dev dataset
+            continue
         #Get the positive passage ids
         pos_pids = data['pos']
 
@@ -219,13 +254,17 @@ train_dataset = MSMARCODataset(queries=train_queries, corpus=corpus, ce_scores=c
 train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=train_batch_size, drop_last=True)
 train_loss = losses.MarginMSELoss(model=model)
 
+
+
 # Train the model
 model.fit(train_objectives=[(train_dataloader, train_loss)],
           epochs=num_epochs,
           warmup_steps=args.warmup_steps,
           use_amp=True,
+          evaluator=evaluator,
           checkpoint_path=model_save_path,
-          checkpoint_save_steps=10000,
+        #   checkpoint_save_steps=10000,
+          evaluation_steps=100,
           optimizer_params = {'lr': args.lr},
           )
 
