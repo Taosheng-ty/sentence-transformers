@@ -46,7 +46,6 @@ def loadMSCorpus(data_folder,*args, **kwargs):
         with open(collection_filepath, 'r', encoding='utf8') as fIn:
             for line in tqdm.tqdm(fIn, desc ="Loading data",total=num_lines):
                 pid, passage = line.strip().split("\t")
-                # pid = int(pid)
                 corpus[pid] = passage
             with open(collection_picked_file, "wb") as myFile:
                 pickle.dump(corpus,myFile)

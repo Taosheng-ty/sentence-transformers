@@ -124,7 +124,7 @@ def qrels2Evaluator(dataset,metrics= pytrec_eval.supported_measures):
     # qrels_filepath = os.path.join(data_folder, '2019qrels-pass.txt')
 
     # if not os.path.exists(qrels_filepath):
-    #     logging.info("Download "+os.path.basename(qrels_filepath))
+    #     logging.info("Download "+os.path.basename(qrels_fpath))
     #     util.http_get('https://trec.nist.gov/data/deep/2019qrels-pass.txt', qrels_filepath)
 
     qrels_filepath=GlobalDataset[dataset]["testQrels"]
@@ -214,29 +214,36 @@ def crossEncoderRanklist(model,candidateSet,queries,Corpus,*args, **kwargs):
         run[qid] = {}
         for pid in sparse_scores:
             run[qid][pid] = float(sparse_scores[pid])
-    # docEmb=model.encode(list(Corpus.values()),batch_size=batch_size,show_progress_bar=True)  # encode sentence
-    # queryEmb=model.encode(list(queries.values()),batch_size=batch_size,show_progress_bar=True)
-    # queries = dict(zip(list(queries.keys()),queryEmb))
-    # docs=dict(zip(list(Corpus.keys()),docEmb))
-    # run={}
-    # for qid in candidateSet:
-    #     run[qid]={}
-    #     for pid in candidateSet[qid]:
-    #         score=np.sum(docs[pid]*queries[qid])
-    #         run[qid][pid]=float(score)
     return run             
-# def trecEval(jedgement,run)
-    # if not os.path.exists("./utils/trec_eval-9.0.7/"):
-    #     tar_filepath = "./utils/trec_eval-9.0.7.tar.gz"
-    #     if not os.path.exists(tar_filepath):
-    #         util.http_get('https://trec.nist.gov/trec_eval/trec_eval-9.0.7.tar.gz', tar_filepath)
-    #     with tarfile.open(tar_filepath, "r:gz") as tar:
-    #         tar.extractall(path="./utils/")
-    #     time.sleep(1)
-    #     os.system("cd utils/trec_eval-9.0.7/ &&make")
-    #     time.sleep(2)    
-    # Eval="./utils/trec_eval-9.0.7/trec_eval -c -m ndcg_cut.10,20,50 "+jedgement+" "+run
-    # os.system(Eval)
+def getSbertRanklist(model,queries,corpus,outputPath=None,reEmb=False,batch_size=32,top_k=100):
+    pids=list(corpus.keys())
+    pidConvert={i:key for i, key in enumerate(pids)}
+    qidConvert={i:key for i, key in enumerate(queries.keys())}
+
+    corpusList= list(corpus.values())
+
+    
+    if outputPath is not None:
+        os.makedirs(outputPath, exist_ok=True)
+        embPath=os.path.join(outputPath,"emb.pt")
+        if os.path.isfile(embPath) and not reEmb:
+            emb=torch.load(embPath)
+            queryEmb=emb["q"]
+            docEmb=emb["d"]
+        else:
+            docEmb=model.encode(corpusList,batch_size=batch_size,show_progress_bar=True,convert_to_tensor=True)  # encode sentence
+            queryEmb=model.encode(list(queries.values()),batch_size=batch_size,show_progress_bar=True,convert_to_tensor=True)
+            torch.save({"q":queryEmb,"d":docEmb},embPath) 
+    corpus_embeddings = docEmb.to('cuda')
+    # corpus_embeddings = util.normalize_embeddings(corpus_embeddings)
+    query_embeddings = queryEmb.to('cuda')
+    # query_embeddings = util.normalize_embeddings(query_embeddings)
+    hits = util.semantic_search(query_embeddings, corpus_embeddings, score_function=util.dot_score,top_k=top_k)   
+    hitsOrigId=[[{'corpus_id': pidConvert[pscore["corpus_id"]], 'score': pscore["score"]}   for pscore in q ]    for q in hits]
+    hits2trec={qidConvert[qid]:{pidConvert[pscore["corpus_id"]]:pscore["score"]  for pscore in q }    for qid,q in enumerate(hits)}
+    if outputPath is not None:
+        runsDict2trec(hits2trec,outfile=os.path.join(outputPath,"trec.rnk"))
+    return hitsOrigId, hits2trec
 if __name__=="__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_name", default='distilbert-base-uncased')
@@ -257,7 +264,7 @@ if __name__=="__main__":
     print(args)
     # The  model we want to fine-tune
     model_name = args.model_name
-    # model_name="msmarco-distilbert-base-tas-b"
+    model_name="msmarco-distilbert-base-tas-b"
     # model_name="output/mse-huggingfaceHard10EpochDist/171600"
     # model_name="../output/log/0"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "2"
@@ -265,15 +272,35 @@ if __name__=="__main__":
     model.to(model._target_device)
     model.eval()
     data_folder =os.path.join(os.path.expanduser('~'), '.cache/MSMARCO')
+    # data_folder =os.path.join(os.path.expanduser('~'), '.cache/MSMARCOToy')
+    
     # data_folder ="/home/collab/u1368791/largefiles/TaoFiles/sentence-transformers/examples/training/ms_marco/msmarco-data"
     os.makedirs(data_folder,exist_ok=True)
     AggResults= defaultdict(list)
     if args.msdev:
-        ir_evaluator=LoadMSDevEvaluator(data_folder)
-        retrieResult=ir_evaluator.compute_metrices(model)
-        print(ir_evaluator(model))
-        AggResults["MSMARCOPassDot"].append(retrieResult["dot_score"]["ndcg@k"])
-        AggResults["MSMARCOPassCos"].append(retrieResult["cos_sim"]["ndcg@k"])
+        # ir_evaluator=LoadMSDevEvaluator(data_folder)
+        dev_queries=loadDevMSqueries(data_folder)
+        dev_rel_docs=loadDevRelMSQrels(data_folder,dev_queries)
+        jedgement = os.path.join(data_folder, 'qrels.dev.tsv')
+        # Read passages
+        corpus=loadMSCorpus(data_folder)
+        corpus= {k: corpus[k] for k in list(corpus.keys())[:10000]}
+        dataLogFolder=os.path.join(args.log_dir,"MSMARCORetrieval")
+        hitsOrigId, _=getSbertRanklist(model,dev_queries,corpus,outputPath=dataLogFolder,reEmb=True)
+        
+        Eval="./utils/trec_eval-9.0.7/trec_eval  -M 10 -m  recip_rank "+jedgement+" "+dataLogFolder+"/trec.rnk"
+        print(Eval)
+        os.system(Eval)
+        # retrieResult=ir_evaluator.compute_metrices(model)
+        # print(ir_evaluator(model))
+        
+        ir_evaluator = evaluation.InformationRetrievalEvaluator(dev_queries, corpus, dev_rel_docs)
+        retrieResult=ir_evaluator.compute_metrics(hitsOrigId)
+        AggResults["MSMARCOPassDot"].append(retrieResult["mrr@k"])
+        print(retrieResult)
+        # retrieResult=ir_evaluator.compute_metrices(model)
+        # print(retrieResult,"model metrices")
+        # AggResults["MSMARCOPassDot"].append(retrieResult[]["mrr@k"])
     AggResults["iterations"].append(0)
     dataNames=list(GlobalDataset.keys())[:3]
     # dataNames=list(GlobalDataset.keys())
@@ -319,6 +346,6 @@ if __name__=="__main__":
     print(AggResults)
     with open(args.log_dir+"/AggResults.jjson", "w") as outfile:
         # outfile.write(ending)
-        json.dump(AggResults,outfile)  
+        json.dump(AggResults,outfile)
     
     
