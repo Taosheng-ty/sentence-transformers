@@ -24,7 +24,7 @@ logging.basicConfig(format='%(asctime)s - %(message)s',
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--train_batch_size", default=16, type=int)
+parser.add_argument("--train_batch_size", default=64, type=int)
 parser.add_argument("--max_seq_length", default=250, type=int)
 parser.add_argument("--model_name", default="distilbert-base-uncased")
 parser.add_argument("--max_passages", default=0, type=int)
@@ -171,7 +171,7 @@ if not os.path.exists(hard_negatives_filepath):
 logging.info("Read hard negatives train file")
 train_queries = {}
 negs_to_use = None
-max_passages=100000
+# max_passages=1000
 with gzip.open(hard_negatives_filepath, 'rt') as fIn:
     for line in tqdm.tqdm(fIn):
         if max_passages > 0 and len(train_queries) >= max_passages:
@@ -263,9 +263,10 @@ model.fit(train_objectives=[(train_dataloader, train_loss)],
           warmup_steps=args.warmup_steps,
           use_amp=True,
           evaluator=evaluator,
-          checkpoint_path=model_save_path,
+        #   checkpoint_path=model_save_path,
         #   checkpoint_save_steps=10000,
-          evaluation_steps=100,
+        #   evaluation_steps=10000,
+            patience=20,
           output_path=model_save_path,
           optimizer_params = {'lr': args.lr},
           )

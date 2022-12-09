@@ -27,7 +27,7 @@ for path in subdir:
     curFolder=os.path.join(rootpath,path)
     if os.path.isdir(curFolder):
         # cmd="slurmRun --cmd='python eval.py  --model_name={rootpath}/{path} --log_dir={rootpath}/{path}/Eval' --template={temp} --outputDir={rootpath}/{path}/Eval".format(rootpath = rootpath, path = path,temp=temp)
-        cmd="slurmRun --slurm=True --cmd='python eval.py --msdev=True  --model_name={rootpath}/{path} --log_dir={rootpath}/{path}/Eval' --template={temp} --outputDir={rootpath}/{path}/Eval".format(rootpath = rootpath, path = path,temp=temp)
+        cmd="slurmRun --slurm=True --cmd='python eval.py --msdev=False  --model_name={rootpath}/{path} --log_dir={rootpath}/{path}/Eval' --template={temp} --outputDir={rootpath}/{path}/Eval".format(rootpath = rootpath, path = path,temp=temp)
         print(cmd)
         time.sleep(30)
         os.system(cmd)
