@@ -1,4 +1,4 @@
 #!/bin/bash
-#SBATCH --mem=10G 
+#SBATCH --mem=50G 
 #SBATCH --qos=normal
 #SBATCH --gres=gpu:1

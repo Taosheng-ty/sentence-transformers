@@ -260,11 +260,11 @@ if __name__=="__main__":
     #     os.environ["CUDA_VISIBLE_DEVICES"] = gpu
     # else:
     #     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
-    print(devices,"devices")
+    print(devices,"devices",flush=True)
     print(args)
     # The  model we want to fine-tune
     model_name = args.model_name
-    model_name="msmarco-distilbert-base-tas-b"
+    # model_name="msmarco-distilbert-base-tas-b"
     # model_name="output/mse-huggingfaceHard10EpochDist/171600"
     # model_name="../output/log/0"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "2"
@@ -277,6 +277,7 @@ if __name__=="__main__":
     # data_folder ="/home/collab/u1368791/largefiles/TaoFiles/sentence-transformers/examples/training/ms_marco/msmarco-data"
     os.makedirs(data_folder,exist_ok=True)
     AggResults= defaultdict(list)
+    batch_size=128
     if args.msdev:
         # ir_evaluator=LoadMSDevEvaluator(data_folder)
         dev_queries=loadDevMSqueries(data_folder)
@@ -284,9 +285,9 @@ if __name__=="__main__":
         jedgement = os.path.join(data_folder, 'qrels.dev.tsv')
         # Read passages
         corpus=loadMSCorpus(data_folder)
-        corpus= {k: corpus[k] for k in list(corpus.keys())[:10000]}
+        # corpus= {k: corpus[k] for k in list(corpus.keys())[:10000]}
         dataLogFolder=os.path.join(args.log_dir,"MSMARCORetrieval")
-        hitsOrigId, _=getSbertRanklist(model,dev_queries,corpus,outputPath=dataLogFolder,reEmb=True)
+        hitsOrigId, _=getSbertRanklist(model,dev_queries,corpus,outputPath=dataLogFolder,reEmb=True,batch_size=batch_size)
         
         Eval="./utils/trec_eval-9.0.7/trec_eval  -M 10 -m  recip_rank "+jedgement+" "+dataLogFolder+"/trec.rnk"
         print(Eval)
@@ -304,7 +305,7 @@ if __name__=="__main__":
     AggResults["iterations"].append(0)
     dataNames=list(GlobalDataset.keys())[:3]
     # dataNames=list(GlobalDataset.keys())
-    batch_size=128
+
     # dataNames=["scifact"]
     for dataName in  dataNames:
         evaluator,relevant_docs=qrels2Evaluator(dataName,{'ndcg_cut.10','ndcg_cut.100',"map"})
