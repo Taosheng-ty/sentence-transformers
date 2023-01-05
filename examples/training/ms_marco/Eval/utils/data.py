@@ -22,6 +22,8 @@ import  sentence_transformers
 from sentence_transformers import InputExample
 from torch.utils.data import Dataset
 import random
+
+
 def loadMSCorpus(data_folder,*args, **kwargs):
     #### Read the corpus files, that contain all the passages. Store them in the corpus dict
     corpus = {}         #dict in the format: passage_id -> passage. Stores all existent passages

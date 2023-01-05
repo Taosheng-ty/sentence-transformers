@@ -18,14 +18,14 @@ rootpath="/home/collab/u1368791/largefiles/TaoFiles/sentence-transformers/exampl
 temp="scripts/slurmtemp.slurm"
 # subdir=["50000","100000","120000","140000",]
 subdir=["210000","220000","230000","235740"]
-subdir=["985000","1195000"]
+subdir=["1195000"]
 # subdir=["124800"]
 # subdir=["200000","220000","230000","235740","210000"]
 # subdir=os.listdir(path=rootpath)
 for path in subdir:
     curFolder=os.path.join(rootpath,path)
     if os.path.isdir(curFolder):
-        cmd="slurmRun --slurm=False  --cmd='python eval.py  --msdev=False --evalFunc=crossEncoderRanklist --model_name={rootpath}/{path} --log_dir={rootpath}/{path}/Eval' --template={temp} --outputDir={rootpath}/{path}/Eval".format(rootpath = rootpath, path = path,temp=temp)
+        cmd="slurmRun --slurm=True  --cmd='python evalModel.py --modelClass=CrossEncoder --data=3+4+5  --msdev=False --evalFunc=crossEncoderRanklist --model_name={rootpath}/{path} --log_dir={rootpath}/{path}/Eval' --template={temp} --outputDir={rootpath}/{path}/Eval".format(rootpath = rootpath, path = path,temp=temp)
         print(cmd)
-        time.sleep(30)
+        # time.sleep(30)
         os.system(cmd)

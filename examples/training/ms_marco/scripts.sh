@@ -1,0 +1,1 @@
+slurmRun --cmd="python train_bi-encoder_margin-mse.py --num_negs_per_system=10 --epochs=1000 --model_name=output/mseRetrainRound2/740000/  --use_pre_trained_model"

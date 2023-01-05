@@ -36,6 +36,9 @@ parser.add_argument("--lr", default=2e-5, type=float)
 parser.add_argument("--num_negs_per_system", default=5, type=int)
 parser.add_argument("--use_pre_trained_model", default=False, action="store_true")
 parser.add_argument("--use_all_queries", default=False, action="store_true")
+parser.add_argument("--patience", default=50, type=int)
+parser.add_argument("--valiSize", default=2000, type=int)
+parser.add_argument("--model_save_path", default=None, type=str)
 args = parser.parse_args()
 
 logging.info(str(args))
@@ -54,16 +57,18 @@ num_epochs = args.epochs         # Number of epochs we want to train
 # Load our embedding model
 if args.use_pre_trained_model:
     logging.info("use pretrained SBERT model")
-    model = sbertSave(model_name)
+    model = sbertSave(model_name_or_path=model_name)
+    print(model)
     model.max_seq_length = max_seq_length
 else:
     logging.info("Create new SBERT model")
     word_embedding_model = models.Transformer(model_name, max_seq_length=max_seq_length)
     pooling_model = models.Pooling(word_embedding_model.get_word_embedding_dimension(), args.pooling)
     model = sbertSave(modules=[word_embedding_model, pooling_model])
-
-model_save_path = f'output/train_bi-encoder-margin_mse-{model_name.replace("/", "-")}-batch_size_{train_batch_size}-{datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}'
-
+if args.model_save_path is None:
+    model_save_path = f'output/train_bi-encoder-margin_mse-{model_name.replace("/", "-")}-batch_size_{train_batch_size}-{datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}'
+else:
+    model_save_path =args.model_save_path
 
 # Write self to path
 os.makedirs(model_save_path, exist_ok=True)
@@ -121,9 +126,9 @@ with open(queries_filepath, 'r', encoding='utf8') as fIn:
 train_samples = []
 dev_samples = {}
 
-# We use 200 random queries from the train set for evaluation during training
+# We use {args.valiSize} random queries from the train set for evaluation during training
 # Each query has at least one relevant and up to 200 irrelevant (negative) passages
-num_dev_queries = 200
+num_dev_queries =args.valiSize
 num_max_dev_negatives = 200
 
 # msmarco-qidpidtriples.rnd-shuf.train-eval.tsv.gz and msmarco-qidpidtriples.rnd-shuf.train.tsv.gz is a randomly
@@ -266,10 +271,14 @@ model.fit(train_objectives=[(train_dataloader, train_loss)],
         #   checkpoint_path=model_save_path,
         #   checkpoint_save_steps=10000,
         #   evaluation_steps=10000,
-            patience=20,
+          patience=args.patience,
           output_path=model_save_path,
           optimizer_params = {'lr': args.lr},
           )
 
 # Train latest model
 model.save(model_save_path)
+## I need to evalue the model after we finished the training.s
+evalcmd=f"slurmRun --slurm=True --cmd='python Eval/evalModel.py --msdev=True  --model_name={model_save_path} --log_dir={model_save_path}/Eval' --template=Eval/scripts/slurmtemp.slurm --outputDir={model_save_path}/Eval"
+print(evalcmd)
+os.system(evalcmd)

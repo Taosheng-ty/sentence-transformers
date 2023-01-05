@@ -1,9 +1,15 @@
 import sys
 import json
 import os
+from torch import Tensor
+import torch
+import logging
+logger = logging.getLogger(__name__)
+from tqdm import tqdm, trange
 scriptPath=os.path.dirname(os.path.abspath(__file__))
 os.chdir(scriptPath+"/../")
 from collections import defaultdict
+
 # scriptPath=os.path.dirname(os.path.abspath(__file__))
 
 # from eval import *
@@ -100,7 +106,6 @@ class evaluatorSbert(evaluation.InformationRetrievalEvaluator):
         for k in AveP_at_k:
             AveP_at_k[k] = np.mean(AveP_at_k[k])
         return {'accuracy@k': num_hits_at_k, 'precision@k': precisions_at_k, 'recall@k': recall_at_k, 'ndcg@k': ndcg, 'mrr@k': MRR, 'map@k': AveP_at_k}
-
 
 
 # class sbertEval()

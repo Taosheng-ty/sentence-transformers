@@ -1,11 +1,3 @@
-"""
-This script runs the evaluation of an SBERT msmarco model on the
-MS MARCO dev dataset and reports different performances metrices for cossine similarity & dot-product.
-
-Usage:
-python eval_msmarco.py model_name [max_corpus_size_in_thousands]
-"""
-
 from sentence_transformers import  LoggingHandler, SentenceTransformer, evaluation, util, models,CrossEncoder
 import logging
 import sys
@@ -28,18 +20,42 @@ from sentence_transformers import  util
 import tarfile
 import csv
 from str2bool import str2bool
-#### Just some code to print debug information to stdout
-logging.basicConfig(format='%(asctime)s - %(message)s',
-                    datefmt='%Y-%m-%d %H:%M:%S',
-                    level=logging.INFO,
-                    handlers=[LoggingHandler()])
+from typing import List, Tuple, Dict, Set, Callable
+from sentence_transformers import  LoggingHandler, SentenceTransformer, evaluation, util, models
+import numpy as np
+from tqdm import tqdm, trange
+from torch import Tensor
+import torch
+import logging
+import psutil
+logger = logging.getLogger(__name__)
+scriptPath=os.path.dirname(os.path.abspath(__file__))
+# os.chdir(scriptPath)
+trecEvalPath=os.path.join(scriptPath,"trec_eval-9.0.7/")
+trecEvalTarPath=os.path.join(scriptPath,"trec_eval-9.0.7.tar.gz")
+if not os.path.exists(trecEvalPath):
+    tar_filepath = trecEvalTarPath
+    if not os.path.exists(tar_filepath):
+        util.http_get('https://trec.nist.gov/trec_eval/trec_eval-9.0.7.tar.gz', tar_filepath)
+    with tarfile.open(tar_filepath, "r:gz") as tar:
+        tar.extractall(path="./")
+    time.sleep(1)
+    os.system(f"cd {trecEvalPath}/ &&make")
+    time.sleep(2)  
 data_folder =os.path.join(os.path.expanduser('~'), '.cache/')
 GlobalDataset={"DL19":{"testQuery-Passage":data_folder+"MSMARCO_DL19Pass/msmarco-passagetest2019-top1000.tsv", 
                 "testQrels":data_folder+"MSMARCO_DL19Pass/2019qrels-pass.txt"},
         "DL20":{"testQuery-Passage":data_folder+"MSMARCO_DL20Pass/msmarco-passagetest2020-top1000.tsv",
                 "testQrels":data_folder+"MSMARCO_DL20Pass/2020qrels-pass.txt"},
         "MSDev":{"testQuery-Passage":data_folder+"MSMARCO/top1000.dev.tsv",
-                "testQrels":data_folder+"MSMARCO/qrels.dev.tsv"}
+                "testQrels":data_folder+"MSMARCO/qrels.dev.tsv"},
+        "disbert0.37":{"testQuery-Passage":"/home/collab/u1368791/largefiles/TaoFiles/sentence-transformers/examples/training/ms_marco/output/mseRetrainRound2/740000/Eval/MSMARCORetrieval/dot_score-trec.rnk",
+                "testQrels":data_folder+"MSMARCO/qrels.dev.tsv","trec":True},
+        "disbert0.355":{"testQuery-Passage":"/home/collab/u1368791/largefiles/TaoFiles/sentence-transformers/examples/training/ms_marco/output/biencoder-vali/epoch-33steps--1-Score0.5761924603174603/Eval/MSMARCORetrieval/dot_score-trec.rnk",
+                "testQrels":data_folder+"MSMARCO/qrels.dev.tsv","trec":True},
+        "bert0.381":{"testQuery-Passage":"/home/collab/u1368791/largefiles/TaoFiles/sentence-transformers/examples/training/ms_marco/Eval/output/msmarco-bert-base-dot-v5/Eval/MSMARCORetrieval/dot_score-trec.rnk",
+                "testQrels":data_folder+"MSMARCO/qrels.dev.tsv",
+                "trec":True}
         }
 BeirDataStorePath=data_folder+"BeirDatasets/"
 datasetsName = ["scifact","nfcorpus","fiqa","arguana","scidocs"]
@@ -67,15 +83,19 @@ BM25ResultsPath=BeirDataStorePath+"BM25InitialRnk/"
 #             BM25FirstPhase(DataDir,BM25Path,QresPath,split=split)
 #         GlobalDataset[datasetCurName][split+"Query-Passage"]=BM25Path
 #         GlobalDataset[datasetCurName][split+"Qrels"]=QresPath
-if not os.path.exists("./utils/trec_eval-9.0.7/"):
-    tar_filepath = "./utils/trec_eval-9.0.7.tar.gz"
-    if not os.path.exists(tar_filepath):
-        util.http_get('https://trec.nist.gov/trec_eval/trec_eval-9.0.7.tar.gz', tar_filepath)
-    with tarfile.open(tar_filepath, "r:gz") as tar:
-        tar.extractall(path="./utils/")
-    time.sleep(1)
-    os.system("cd utils/trec_eval-9.0.7/ &&make")
-    time.sleep(2)  
+
+
+# importing libraries
+import os
+import psutil
+
+# inner psutil function
+def process_memory():
+	process = psutil.Process(os.getpid())
+	mem_info = process.memory_info()
+	return mem_info.rss
+
+
 def LoadMSDevEvaluator(data_folder,Sizelimit=None,*args, **kwargs):
     ### Data files
     
@@ -150,6 +170,20 @@ def loadEvalRanklist(dataset):
             queries[qid]=query
             Corpus[pid]=passage
     return candidateSet,queries,Corpus
+def loadEvalRanklistTrec(dataset,queryOrig,CorpusOrig):
+    queries_passage_filepath=GlobalDataset[dataset]["testQuery-Passage"]
+    candidateSet= defaultdict(list)
+    num_lines = sum(1 for line in open(queries_passage_filepath))
+    n=1
+    Corpus=defaultdict(str)
+    queries=defaultdict(str)
+    with open(queries_passage_filepath, 'r', encoding='utf8') as fIn:
+        for line in tqdm(fIn, desc ="Loading data",total=num_lines):
+            qid,_, pid,rank,score,_ = line.strip().split()
+            candidateSet[qid].append(pid)
+            queries[qid]=queryOrig[qid]
+            Corpus[pid]=CorpusOrig[pid]
+    return candidateSet,queries,Corpus
             #  {'qid': data['qid'], 'query': queries[data['qid']], 'pos': pos_pids, 'neg': neg_pids}
 #     return candidateSet
 def DualEncoderRanklist(model,candidateSet,queries,Corpus,batch_size=32):
@@ -190,9 +224,10 @@ def runsDict2Msmarco(run, outfile):
             ranklist.sort(key=lambda x: -x[1])
             for rank, (Pid,score) in enumerate(ranklist):
                 tsv_writer.writerow([qid,Pid,rank+1])  ## output to trec format  
-def crossEncoderRanklist(model,candidateSet,queries,Corpus,*args, **kwargs):
+def crossEncoderRanklist(model,candidateSet,queries,Corpus,batch_size=32,*args, **kwargs):
     run={}
-    for qid in queries:
+    NumQuery=len(queries.keys())
+    for qid in tqdm(queries, desc ="Generating ranklists",total=NumQuery):
         query = queries[qid]
 
         cand = candidateSet[qid]
@@ -202,9 +237,9 @@ def crossEncoderRanklist(model,candidateSet,queries,Corpus,*args, **kwargs):
         cross_inp = [[query, sent] for sent in corpus_sentences]
 
         if model.config.num_labels > 1: #Cross-Encoder that predict more than 1 score, we use the last and apply softmax
-            cross_scores = model.predict(cross_inp, apply_softmax=True)[:, 1].tolist()
+            cross_scores = model.predict(cross_inp, apply_softmax=True,show_progress_bar=False,batch_size=batch_size)[:, 1].tolist()
         else:
-            cross_scores = model.predict(cross_inp).tolist()
+            cross_scores = model.predict(cross_inp,show_progress_bar=False,batch_size=batch_size).tolist()
 
         cross_scores_sparse = {}
         for idx, pid in enumerate(pids):
@@ -225,18 +260,19 @@ def getSbertRanklist(model,queries,corpus,outputPath=None,reEmb=False,batch_size
     
     if outputPath is not None:
         os.makedirs(outputPath, exist_ok=True)
-        embPath=os.path.join(outputPath,"emb.pt")
+        embPath=os.path.join(outputPath,"emb.npy")
         if os.path.isfile(embPath) and not reEmb:
-            emb=torch.load(embPath)
+            emb=np.load(embPath)
             queryEmb=emb["q"]
             docEmb=emb["d"]
         else:
-            docEmb=model.encode(corpusList,batch_size=batch_size,show_progress_bar=True,convert_to_tensor=True)  # encode sentence
-            queryEmb=model.encode(list(queries.values()),batch_size=batch_size,show_progress_bar=True,convert_to_tensor=True)
-            torch.save({"q":queryEmb,"d":docEmb},embPath) 
-    corpus_embeddings = docEmb.to('cuda')
+            docEmb=model.encode(corpusList,batch_size=batch_size,show_progress_bar=True)  # encode sentence
+            queryEmb=model.encode(list(queries.values()),batch_size=batch_size,show_progress_bar=True)
+            np.save(embPath,{"q":queryEmb,"d":docEmb})
+            # torch.save({"q":queryEmb,"d":docEmb},embPath) 
+    corpus_embeddings = docEmb
     # corpus_embeddings = util.normalize_embeddings(corpus_embeddings)
-    query_embeddings = queryEmb.to('cuda')
+    query_embeddings = queryEmb
     # query_embeddings = util.normalize_embeddings(query_embeddings)
     hits = util.semantic_search(query_embeddings, corpus_embeddings, score_function=util.dot_score,top_k=top_k)   
     hitsOrigId=[[{'corpus_id': pidConvert[pscore["corpus_id"]], 'score': pscore["score"]}   for pscore in q ]    for q in hits]
@@ -244,109 +280,69 @@ def getSbertRanklist(model,queries,corpus,outputPath=None,reEmb=False,batch_size
     if outputPath is not None:
         runsDict2trec(hits2trec,outfile=os.path.join(outputPath,"trec.rnk"))
     return hitsOrigId, hits2trec
-if __name__=="__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model_name", default='distilbert-base-uncased')
-    parser.add_argument("--log_dir",default="output/log", help="where to store the model")
-    parser.add_argument("--gpu", type=int, default=None, nargs="+", help="used gpu")
-    parser.add_argument("--rerun", type=str2bool, default=False, help="reurn to generate rnklist or not, default no")
-    parser.add_argument("--msdev", type=str2bool, default=True,  help="evaluate on ms dev or not, default yes.")
-    parser.add_argument("--evalFunc", type=str, default="DualEncoderRanklist",  help="evaluate function")
-    args = parser.parse_args()
-    # if args.gpu is None:
-    devices=list(range(torch.cuda.device_count()))
-    #     gpu=str(random.choice(devices))
-    #     print(gpu,devices)
-    #     os.environ["CUDA_VISIBLE_DEVICES"] = gpu
-    # else:
-    #     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
-    print(devices,"devices",flush=True)
-    print(args)
-    # The  model we want to fine-tune
-    model_name = args.model_name
-    # model_name="msmarco-distilbert-base-tas-b"
-    # model_name="output/mse-huggingfaceHard10EpochDist/171600"
-    # model_name="../output/log/0"
-    # os.environ["CUDA_VISIBLE_DEVICES"] = "2"
-    model = SentenceTransformer(model_name)
-    model.to(model._target_device)
-    model.eval()
-    data_folder =os.path.join(os.path.expanduser('~'), '.cache/MSMARCO')
-    # data_folder =os.path.join(os.path.expanduser('~'), '.cache/MSMARCOToy')
-    
-    # data_folder ="/home/collab/u1368791/largefiles/TaoFiles/sentence-transformers/examples/training/ms_marco/msmarco-data"
-    os.makedirs(data_folder,exist_ok=True)
-    AggResults= defaultdict(list)
-    batch_size=128
-    if args.msdev:
-        # ir_evaluator=LoadMSDevEvaluator(data_folder)
-        dev_queries=loadDevMSqueries(data_folder)
-        dev_rel_docs=loadDevRelMSQrels(data_folder,dev_queries)
-        jedgement = os.path.join(data_folder, 'qrels.dev.tsv')
-        # Read passages
-        corpus=loadMSCorpus(data_folder)
-        # corpus= {k: corpus[k] for k in list(corpus.keys())[:10000]}
-        dataLogFolder=os.path.join(args.log_dir,"MSMARCORetrieval")
-        hitsOrigId, _=getSbertRanklist(model,dev_queries,corpus,outputPath=dataLogFolder,reEmb=True,batch_size=batch_size)
-        
-        Eval="./utils/trec_eval-9.0.7/trec_eval  -M 10 -m  recip_rank "+jedgement+" "+dataLogFolder+"/trec.rnk"
-        print(Eval)
-        os.system(Eval)
-        # retrieResult=ir_evaluator.compute_metrices(model)
-        # print(ir_evaluator(model))
-        
-        ir_evaluator = evaluation.InformationRetrievalEvaluator(dev_queries, corpus, dev_rel_docs)
-        retrieResult=ir_evaluator.compute_metrics(hitsOrigId)
-        AggResults["MSMARCOPassDot"].append(retrieResult["mrr@k"])
-        print(retrieResult)
-        # retrieResult=ir_evaluator.compute_metrices(model)
-        # print(retrieResult,"model metrices")
-        # AggResults["MSMARCOPassDot"].append(retrieResult[]["mrr@k"])
-    AggResults["iterations"].append(0)
-    dataNames=list(GlobalDataset.keys())[:3]
-    # dataNames=list(GlobalDataset.keys())
 
-    # dataNames=["scifact"]
-    for dataName in  dataNames:
-        evaluator,relevant_docs=qrels2Evaluator(dataName,{'ndcg_cut.10','ndcg_cut.100',"map"})
-        candidateSet,queries,Corpus=loadEvalRanklist(dataName)
-        queriedFiltered=list(queries.keys()&relevant_docs.keys())
-        queries={queryEach:queries[queryEach] for queryEach in queriedFiltered}
-        dataLogFolder=os.path.join(args.log_dir,dataName)
-        trecOutfile=os.path.join(dataLogFolder,"output.trec.csv")
-        msOutfile=os.path.join(dataLogFolder,"output.ms.csv")
-        if not os.path.isfile(trecOutfile) or args.rerun:
-            run=globals()[args.evalFunc](model,candidateSet,queries,Corpus,batch_size=batch_size)
-        else:
-            with open(trecOutfile, 'r') as f_run:
-                run = pytrec_eval.parse_run(f_run)            
-        EvalResults=evaluator.evaluate(run)
-        RealCalMetrics=list(EvalResults.values())[0].keys()
-        for measure in sorted(RealCalMetrics):
-            AggResults[dataName+measure].append(pytrec_eval.compute_aggregated_measure(
-                    measure,
-                    [query_measures[measure]
-                        for query_measures in EvalResults.values()]))
 
-        os.makedirs(dataLogFolder, exist_ok=True)
-        runsDict2trec(run,trecOutfile)
-        runsDict2Msmarco(run,msOutfile)
-        jedgement=GlobalDataset[dataName]["testQrels"]
-        Eval="./utils/trec_eval-9.0.7/trec_eval  -M 10 -m  recip_rank "+jedgement+" "+trecOutfile
-        print(Eval)
-        os.system(Eval)
-        Eval="./utils/trec_eval-9.0.7/trec_eval  -M 100 -m  recip_rank "+jedgement+" "+trecOutfile
-        print(Eval)
-        os.system(Eval)
-        Eval="python  ./utils/msmarco_passage_eval.py  "+jedgement+" "+msOutfile
-        print(Eval)
-        os.system(Eval)
-        Eval="python  ./utils/evalSbert.py  "+jedgement+" "+trecOutfile
-        print(Eval)
-        os.system(Eval)
-    print(AggResults)
-    with open(args.log_dir+"/AggResults.jjson", "w") as outfile:
-        # outfile.write(ending)
-        json.dump(AggResults,outfile)
-    
-    
+class evaluatorSbert2(evaluation.InformationRetrievalEvaluator):
+    def  GenerateRnk(self, model, corpus_model = None, corpus_embeddings: Tensor = None,cutoff=200,trecOutputPath=None):
+        if corpus_model is None:
+            corpus_model = model
+
+        max_k = max(max(self.mrr_at_k), max(self.ndcg_at_k), max(self.accuracy_at_k), max(self.precision_recall_at_k), max(self.map_at_k))
+        assert max_k <= cutoff, f"the number of ranklist cutoff is {cutoff}, which should be greater than evaluation needed cutoff {max_k}"
+        max_k=cutoff     
+        # Compute embedding for the queries
+        query_embeddings = model.encode(self.queries, show_progress_bar=self.show_progress_bar, batch_size=self.batch_size, convert_to_tensor=True)
+
+        queries_result_list = {}
+        for name in self.score_functions:
+            queries_result_list[name] = [[] for _ in range(len(query_embeddings))]
+
+        #Iterate over chunks of the corpus
+        for corpus_start_idx in trange(0, len(self.corpus), self.corpus_chunk_size, desc='Corpus Chunks', disable=not self.show_progress_bar):
+            print('RAM Used (GB):', psutil.virtual_memory()[3]/1000000000,flush=True)
+            corpus_end_idx = min(corpus_start_idx + self.corpus_chunk_size, len(self.corpus))
+
+            #Encode chunk of corpus
+            if corpus_embeddings is None:
+                sub_corpus_embeddings = corpus_model.encode(self.corpus[corpus_start_idx:corpus_end_idx], show_progress_bar=False, batch_size=self.batch_size, convert_to_tensor=True)
+            else:
+                sub_corpus_embeddings = corpus_embeddings[corpus_start_idx:corpus_end_idx]
+
+            #Compute cosine similarites
+            for name, score_function in self.score_functions.items():
+                pair_scores = score_function(query_embeddings, sub_corpus_embeddings)
+
+                #Get top-k values
+                pair_scores_top_k_values, pair_scores_top_k_idx = torch.topk(pair_scores, min(max_k, len(pair_scores[0])), dim=1, largest=True, sorted=False)
+                pair_scores_top_k_values = pair_scores_top_k_values.cpu().tolist()
+                pair_scores_top_k_idx = pair_scores_top_k_idx.cpu().tolist()
+
+                for query_itr in range(len(query_embeddings)):
+                    for sub_corpus_id, score in zip(pair_scores_top_k_idx[query_itr], pair_scores_top_k_values[query_itr]):
+                        corpus_id = self.corpus_ids[corpus_start_idx+sub_corpus_id]
+                        queries_result_list[name][query_itr].append({'corpus_id': corpus_id, 'score': score})
+            #Sort and strip to top_k results
+        for  score_functionname in queries_result_list:    
+            queries_result_listEach=queries_result_list[score_functionname]
+            for idx in range(len(queries_result_listEach)):
+                queries_result_listEach[idx] = sorted(queries_result_listEach[idx], key=lambda x: x['score'], reverse=True)
+                queries_result_listEach[idx] = queries_result_listEach[idx][0:max_k]
+            if trecOutputPath is not None:
+                hits2trec={self.queries_ids[qid]:{pscore["corpus_id"]:pscore["score"]  for pscore in q }    for qid,q in enumerate(queries_result_listEach)}
+                runsDict2trec(hits2trec,outfile=os.path.join(trecOutputPath,score_functionname+"-trec.rnk"))   
+                
+        return  queries_result_list       
+    def compute_metrices(self, model, corpus_model = None, corpus_embeddings: Tensor = None,cutoff=200,trecOutputPath=None) -> Dict[str, float]:
+
+        queries_result_list=self.GenerateRnk(model=model,corpus_model =corpus_model ,corpus_embeddings=corpus_embeddings,cutoff=cutoff,trecOutputPath=trecOutputPath)
+        logger.info("Queries: {}".format(len(self.queries)))
+        logger.info("Corpus: {}\n".format(len(self.corpus)))
+
+        #Compute scores
+        scores = {name: self.compute_metrics(queries_result_list[name]) for name in self.score_functions}
+
+        #Output
+        for name in self.score_function_names:
+            logger.info("Score-Function: {}".format(name))
+            self.output_scores(scores[name])
+        return scores
